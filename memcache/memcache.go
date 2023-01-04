@@ -160,6 +160,7 @@ type Client struct {
 
 	gcLoopInterval     time.Duration
 	gcExpireConnection time.Duration
+	connTuner          func(conn net.Conn)
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -276,6 +277,9 @@ func (c *Client) dial(addr net.Addr) (net.Conn, error) {
 
 	if ne, ok := err.(net.Error); ok && ne.Timeout() {
 		return nil, &ConnectTimeoutError{addr}
+	}
+	if c.connTuner != nil {
+		c.connTuner(nc)
 	}
 
 	return nil, err
