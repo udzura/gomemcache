@@ -138,6 +138,38 @@ func NewFromSelector(ss ServerSelector) *Client {
 	return c
 }
 
+type ClientOptionFunc = func(c *Client)
+
+func ClientSetGCLoopInterval(interval time.Duration) ClientOptionFunc {
+	return func(c *Client) {
+		c.gcLoopInterval = interval
+	}
+}
+
+func ClientSetGCExpireConnection(expiration time.Duration) ClientOptionFunc {
+	return func(c *Client) {
+		c.gcExpireConnection = expiration
+	}
+}
+
+func ClientSetConnectionTuner(hook func(conn net.Conn)) ClientOptionFunc {
+	return func(c *Client) {
+		c.connTuner = hook
+	}
+}
+
+// NewFromSelectorWithOptions returns a new Client using the provided ServerSelector and options.
+func NewFromSelectorWithOptions(ss ServerSelector, opts ...ClientOptionFunc) *Client {
+	c := &Client{
+		selector: ss,
+	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	go c.gcLoop()
+	return c
+}
+
 // Client is a memcache client.
 // It is safe for unlocked use by multiple concurrent goroutines.
 type Client struct {
