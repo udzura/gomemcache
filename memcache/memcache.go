@@ -70,6 +70,9 @@ const (
 	// DefaultMaxIdleConns is the default maximum number of idle connections
 	// kept for any single address.
 	DefaultMaxIdleConns = 2
+
+	DefaultGCInterval         = 1 * time.Minute
+	DefaultGCExpireConnection = 15 * time.Minute
 )
 
 const buffered = 8 // arbitrary buffered channel size, for readability
@@ -126,7 +129,13 @@ func New(server ...string) *Client {
 
 // NewFromSelector returns a new Client using the provided ServerSelector.
 func NewFromSelector(ss ServerSelector) *Client {
-	return &Client{selector: ss}
+	c := &Client{
+		selector:           ss,
+		gcLoopInterval:     DefaultGCInterval,
+		gcExpireConnection: DefaultGCExpireConnection,
+	}
+	go c.gcLoop()
+	return c
 }
 
 // Client is a memcache client.
@@ -148,6 +157,9 @@ type Client struct {
 
 	lk       sync.Mutex
 	freeconn map[string][]*conn
+
+	gcLoopInterval     time.Duration
+	gcExpireConnection time.Duration
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -173,10 +185,11 @@ type Item struct {
 
 // conn is a connection to a server.
 type conn struct {
-	nc   net.Conn
-	rw   *bufio.ReadWriter
-	addr net.Addr
-	c    *Client
+	nc        net.Conn
+	rw        *bufio.ReadWriter
+	addr      net.Addr
+	c         *Client
+	updatedAt time.Time
 }
 
 // release returns this connection back to the client's free pool
@@ -185,7 +198,8 @@ func (cn *conn) release() {
 }
 
 func (cn *conn) extendDeadline() {
-	cn.nc.SetDeadline(time.Now().Add(cn.c.netTimeout()))
+	cn.updatedAt = time.Now()
+	cn.nc.SetDeadline(time.Now().Add(cn.c.netTimeout() * 2))
 }
 
 // condRelease releases this connection if the error pointed to by err
@@ -301,6 +315,33 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 		return err
 	}
 	return nil
+}
+
+func (c *Client) gcLoop() {
+	ticker := time.NewTicker(c.gcLoopInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			c.runGC()
+		}
+	}
+}
+
+func (c *Client) runGC() {
+	c.lk.Lock()
+	defer c.lk.Unlock()
+
+	for addr, connlist := range c.freeconn {
+		newconnlist := make([]*conn, 0)
+		for _, cn := range connlist {
+			if time.Since(cn.updatedAt) < c.gcExpireConnection {
+				newconnlist = append(newconnlist, cn)
+			}
+		}
+		c.freeconn[addr] = newconnlist
+	}
 }
 
 func (c *Client) FlushAll() error {
