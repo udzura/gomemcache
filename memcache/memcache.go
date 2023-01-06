@@ -20,6 +20,7 @@ package memcache
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -134,7 +135,7 @@ func NewFromSelector(ss ServerSelector) *Client {
 		gcLoopInterval:     DefaultGCInterval,
 		gcExpireConnection: DefaultGCExpireConnection,
 	}
-	go c.gcLoop()
+	go c.gcLoop(context.Background())
 	return c
 }
 
@@ -152,6 +153,12 @@ func ClientSetGCExpireConnection(expiration time.Duration) ClientOptionFunc {
 	}
 }
 
+func ClientSetGCLoopContext(ctx context.Context) ClientOptionFunc {
+	return func(c *Client) {
+		c.gcLoopContext = ctx
+	}
+}
+
 func ClientSetConnectionTuner(hook func(conn net.Conn)) ClientOptionFunc {
 	return func(c *Client) {
 		c.connTuner = hook
@@ -166,7 +173,12 @@ func NewFromSelectorWithOptions(ss ServerSelector, opts ...ClientOptionFunc) *Cl
 	for _, opt := range opts {
 		opt(c)
 	}
-	go c.gcLoop()
+
+	if c.gcLoopContext != nil {
+		go c.gcLoop(c.gcLoopContext)
+	} else {
+		go c.gcLoop(context.Background())
+	}
 	return c
 }
 
@@ -193,6 +205,7 @@ type Client struct {
 	gcLoopInterval     time.Duration
 	gcExpireConnection time.Duration
 	connTuner          func(conn net.Conn)
+	gcLoopContext      context.Context
 }
 
 // Item is an item to be got or stored in a memcached server.
@@ -353,12 +366,15 @@ func (c *Client) onItem(item *Item, fn func(*Client, *bufio.ReadWriter, *Item) e
 	return nil
 }
 
-func (c *Client) gcLoop() {
+func (c *Client) gcLoop(ctx context.Context) {
 	ticker := time.NewTicker(c.gcLoopInterval)
 	defer ticker.Stop()
 
 	for {
 		select {
+		case <-ctx.Done():
+			return
+
 		case <-ticker.C:
 			c.runGC()
 		}
