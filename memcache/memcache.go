@@ -370,7 +370,7 @@ func (c *Client) runGC() {
 	defer c.lk.Unlock()
 
 	for addr, connlist := range c.freeconn {
-		newconnlist := make([]*conn, 0)
+		newconnlist := make([]*conn, 0, len(connlist))
 		for _, cn := range connlist {
 			if time.Since(cn.updatedAt) < c.gcExpireConnection {
 				newconnlist = append(newconnlist, cn)
