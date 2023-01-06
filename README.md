@@ -3,6 +3,15 @@
 This is a memcache client library for the Go programming language
 (http://golang.org/).
 
+## Forked version
+
+We add some features to this library, in order to fit to our use case.
+
+* Support option function pattern
+* Delete old connections preriodically
+
+We plan to send patches to original someday.
+
 ## Installing
 
 ### Using *go get*
